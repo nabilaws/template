@@ -72,12 +72,14 @@ deletes the local tag.
 2. **Full gate.** `full-check.yml`: the light gate plus the screen suites,
    the composed typecheck, and the database lanes (Section 9).
 3. **Images.** `make package VERSION=<v>` builds `api`, `web`, and `worker`
-   for `linux/amd64` into the runner's local image store.
+   for the runner's own platform into its local image store. The job runs on
+   `RELEASE_RUNNER` (default `ubuntu-latest`, which is `linux/amd64`).
 4. **Smoke test.** `make smoke VERSION=<v>` (Section 7.2).
-5. **Push.** Only when the repository variable `REGISTRY` is set: logs in to
-   the registry host, the part of `REGISTRY` before the first `/`, with
-   `REGISTRY_USERNAME` and `REGISTRY_PASSWORD` (password on standard input),
-   pushes the images with the tag `<v>` for every platform in `PLATFORMS`, and
+5. **Push.** Only when the repository variable `REGISTRY` is set: when
+   `REGISTRY_PASSWORD` is set, logs in to the registry host, the part of
+   `REGISTRY` before the first `/`, with `REGISTRY_USERNAME` and
+   `REGISTRY_PASSWORD` (password on standard input); otherwise it uses the
+   runner's own registry login. It pushes the images with the tag `<v>` for every platform in `PLATFORMS`, and
    logs out. The list of pushed images with their digests goes to the build
    artifact `margince-images-<v>`.
 6. **Desktop bundles.** `desktop-macos.yml` for Apple silicon and for Intel,
@@ -88,8 +90,10 @@ deletes the local tag.
    list the core version, the instance commit, and the pushed image digests,
    or `images were not pushed: REGISTRY is not set`.
 
-Only the `linux/amd64` images are smoke-tested. Other platforms in
-`PLATFORMS` are pushed without their own smoke test.
+Only the runner's own platform is smoke-tested. Other platforms in
+`PLATFORMS` are pushed without their own smoke test, so run the release on a
+runner of the architecture you deploy (the standard stacks' runners have their
+stack's architecture).
 
 A failed run publishes no release. Fix the cause, then delete the tag and cut
 the release again:
@@ -112,13 +116,29 @@ without demo data. Someone with admin rights on the repository can set:
 |---|---|---|---|
 | `REGISTRY` | variable | unset | The image name prefix, for example `docker.io/acme` or `registry.example.com/acme`. It must start with the registry host. Unset: the images are not pushed. |
 | `REGISTRY_USERNAME` | secret | none | The user name for the registry login. |
-| `REGISTRY_PASSWORD` | secret | none | The password or token for the registry login. Never printed. |
-| `PLATFORMS` | variable | `linux/amd64` | Comma-separated platforms of the pushed images, for example `linux/amd64,linux/arm64`. |
+| `REGISTRY_PASSWORD` | secret | none | The password or token for the registry login. Never printed. Unset: no login; the runner's own registry login is used (a self-hosted runner, below). |
+| `PLATFORMS` | variable | `linux/amd64,linux/arm64` | Comma-separated platforms of the pushed images. The default serves both architectures; set `linux/amd64` or `linux/arm64` alone for a faster build. The smoke test runs the runner's own platform. |
+| `RELEASE_RUNNER` | variable | `ubuntu-latest` | The runner label of the `images` job: the build, the smoke test and the push. Set it to a self-hosted runner's label to build inside the deployment's network. |
 | `DATASET_REPOSITORY` | variable | unset | The demo dataset repository that the desktop workflows check out and seed. |
 | `DATASET_DEPLOY_KEY` | secret | unset | An SSH key with read access to `DATASET_REPOSITORY`. Without it or the variable, the bundles ship without demo data. |
 
 Use the same `REGISTRY` value when you deploy, so that `make deploy` names the
 same images ([deploy.md](deploy.md#53-credentials)).
+
+**Building inside the deployment's network.** With `RELEASE_RUNNER` set to
+the label of a self-hosted runner (the standard stacks in
+`deploy/production/` provide one), the `images` job runs there: the code is
+built, smoke-tested and pushed inside the cloud network, and the runner logs
+in to the private registry with its cloud identity, so no registry password is
+stored in GitHub. Leave `REGISTRY_USERNAME` and `REGISTRY_PASSWORD` unset in
+that case. The other jobs keep running on GitHub's runners. Register a
+self-hosted runner only on a private repository: on a public one, a pull
+request from anyone could run code on it.
+
+**Architectures.** Core's `Dockerfile` cross-compiles, so any runner builds
+every platform in `PLATFORMS`. The default, `linux/amd64,linux/arm64`,
+deploys on either architecture; the smoke test covers the runner's own platform, the
+other platforms are pushed without their own smoke test.
 
 ## 6. Image names and labels
 

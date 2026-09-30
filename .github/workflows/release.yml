@@ -118,11 +118,12 @@ jobs:
   ## publish needs this job, so a failed smoke test also means no release.
   ##
   ## The smoke test needs the images in the local image store, which holds one
-  ## platform, so the first build is linux/amd64 (the runner's own platform)
-  ## with --load. The push is a second bake with --push for every platform in
-  ## vars.PLATFORMS (default linux/amd64). It runs on the same builder, so the
-  ## linux/amd64 layers come from the first build's cache rather than being
-  ## built again. The docker-container builder is what makes bake's metadata
+  ## platform, so the first build is the runner's own platform (linux/amd64 on
+  ## ubuntu-latest, linux/arm64 on an arm64 self-hosted runner) with --load.
+  ## The push is a second bake with --push for every platform in
+  ## vars.PLATFORMS (default linux/amd64,linux/arm64). It runs on the same builder, so the
+  ## runner platform's layers come from the first build's cache rather than
+  ## being built again. The docker-container builder is what makes bake's metadata
   ## file record the pushed digests, and QEMU runs the runtime stages of a
   ## foreign platform (core's Dockerfile cross-compiles its builder stages).
   ##
@@ -132,7 +133,10 @@ jobs:
   ## name can contain the registry user name (docker.io/acme with user acme).
   images:
     needs: [version, full-check]
-    runs-on: ubuntu-latest
+    ## vars.RELEASE_RUNNER names a self-hosted runner label (a runner inside the
+    ## deployment's own network, docs/release.md Section 5); unset, GitHub's
+    ## ubuntu-latest builds. Only this job needs the registry, so only it moves.
+    runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
     outputs:
       core: ${{ steps.core.outputs.core }}
     env:
@@ -172,10 +176,13 @@ jobs:
           core="$(instance_get core)"
           echo "core=${core}" >> "$GITHUB_OUTPUT"
 
-      - name: Build the images (linux/amd64, loaded locally)
+      - name: Build the images (the runner's platform, loaded locally)
         shell: bash
         env:
-          PLATFORMS: linux/amd64
+          ## Empty: the runner's own platform, amd64 or arm64, so the smoke test
+          ## runs the images natively. The push below builds every platform in
+          ## vars.PLATFORMS.
+          PLATFORMS: ""
         run: make package VERSION="$VERSION"
 
       - name: Smoke test
@@ -187,7 +194,7 @@ jobs:
         if: vars.REGISTRY != ''
         shell: bash
         env:
-          PLATFORMS: ${{ vars.PLATFORMS || 'linux/amd64' }}
+          PLATFORMS: ${{ vars.PLATFORMS || 'linux/amd64,linux/arm64' }}
           REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
           REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
         run: |
@@ -196,9 +203,14 @@ jobs:
           ## may carry. The credential is removed from the runner on every
           ## exit of this step, the failed push included.
           host="${REGISTRY%%/*}"
-          trap 'docker logout "$host" >/dev/null 2>&1 || true' EXIT
-          printf '%s' "$REGISTRY_PASSWORD" \
-            | docker login "$host" -u "$REGISTRY_USERNAME" --password-stdin
+          ## Without the secrets, the runner's own registry login is used: a
+          ## self-hosted runner in the deployment's network logs in with its
+          ## cloud identity (docs/release.md Section 5), so no password exists.
+          if [ -n "$REGISTRY_PASSWORD" ]; then
+            trap 'docker logout "$host" >/dev/null 2>&1 || true' EXIT
+            printf '%s' "$REGISTRY_PASSWORD" \
+              | docker login "$host" -u "$REGISTRY_USERNAME" --password-stdin
+          fi
           metadata="$RUNNER_TEMP/bake-metadata.json"
           make package VERSION="$VERSION" PUSH=1 METADATA_FILE="$metadata"
           source scripts/lib.sh
