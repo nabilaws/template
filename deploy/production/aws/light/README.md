@@ -29,6 +29,26 @@ require the mount. It also bind-mounts `/var/lib/docker/margince-host` at
 on the data volume too. It does not install Docker or Margince. Keep `HOST_DIR`
 unset, or under `/opt/margince`.
 
+```mermaid
+flowchart LR
+  users(["Users, any network"]) -->|"HTTPS 443"| ip["Elastic IP<br/>SG: 80, 443 open; 22 from ssh_allowed_cidrs"]
+  operator(["Operator"]) -->|"SSH 22, make deploy"| ip
+  subgraph vm["Ubuntu 24.04 EC2 instance, Docker Compose (host adapter)"]
+    caddy["Caddy<br/>HTTPS, certificates"] --> nginx["nginx<br/>routing, rate limits"]
+    nginx --> api["api"]
+    nginx --> web["web (SPA)"]
+    api --> pg[("Postgres 16")]
+    api --> redis[("Redis 7.2")]
+    worker["worker"] --> pg
+    worker --> redis
+  end
+  ip --> caddy
+  vm --- disk[("EBS data volume<br/>/var/lib/docker")]
+  backup["DLM snapshots, daily"] -.-> disk
+  ssm["SSM Parameter Store<br/>license"] -.->|"read by the operator"| operator
+  alerts["CloudWatch alarms, SNS"] -.-> mail(["alert_email"])
+```
+
 ## 2. Cost
 
 eu-central-1, on demand, about **USD 80 per month**:

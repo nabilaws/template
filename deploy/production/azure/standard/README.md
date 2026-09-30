@@ -17,15 +17,39 @@ the AWS standard stack.
 | Delivery | Container Registry Premium (images from `make release`, private endpoint), jumpbox VM with Azure Bastion Developer |
 | Protection | Share soft delete and daily Azure Backup (attachments, redis), delete locks on the stateful resources, diagnostic settings on every resource that has them, metric alerts, Log Analytics (90 days) |
 
+```mermaid
+flowchart LR
+  users(["Users, any network"]) -->|"HTTPS"| agw["Application Gateway WAF v2<br/>public IP, TLS, WAF policy"]
+  subgraph vnet["VNet"]
+    subgraph env["Container Apps environment (internal)"]
+      subgraph apiapp["api app"]
+        edge["edge nginx<br/>SPA, rate limits"] --> api["cmd/api"]
+      end
+      worker["worker"]
+      redis[("Redis 7.2")]
+    end
+    pg[("Postgres Flexible 16<br/>CMK")]
+    files[("Storage: config, attachments, redis<br/>CMK, private endpoint")]
+    kv["Key Vault<br/>secrets, CMK, certificate"]
+    acr["Container Registry<br/>make release images"]
+    jump["Jumpbox<br/>Bastion Developer"]
+    nat["NAT Gateway<br/>fixed egress IP"]
+  end
+  agw -->|"HTTPS"| edge
+  api --> pg
+  api --> redis
+  worker --> pg
+  worker --> redis
+  api -->|"SMB"| files
+  api -.->|"secrets"| kv
+  worker --> nat
+  api --> nat
+  nat --> ext(["Graph, LLM, SMTP"])
+  env -.->|"pull"| acr
+  jump -.->|"bootstrap"| pg
+  logs["Log Analytics, alerts"] -.-> mail(["alert_email"])
 ```
-Internet ──HTTPS──> Application Gateway WAF v2 ──HTTPS──> api app ingress (private) ──> edge (nginx :8081) ──localhost──> cmd/api (:8080)
-                                         │  serves the SPA                  │
-                                         │  rate limits auth paths          ├─> Postgres (VNet)
-                                         │                                  ├─> redis app (TCP 6379, in the environment)
-                                         │                                  ├─> Key Vault, Files (private endpoints)
-                                         │                                  └─> NAT fixed IP ─> Graph, Dataverse, LLM
-worker (no ingress) ───────────────────────────────────────────────────────────┘
-```
+
 
 Staff sign in as described in "Sign-in". Guests reach only their scoped links (booking, Deal Room,
 unsubscribe), which the app protects with tokens.

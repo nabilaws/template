@@ -16,6 +16,16 @@ Terraform that creates the cloud infrastructure for it.
 Each flavour deploys Margince the same way on Azure and on AWS. Only the
 cloud services differ.
 
+```mermaid
+flowchart LR
+  code["Instance repository<br/>core pinned by tag"] -->|"make release"| images["api, web, worker images<br/>REGISTRY/instance/role:VERSION"]
+  tf["Terraform<br/>deploy/production/cloud/flavour"] -->|"terraform apply"| infra["Cloud infrastructure"]
+  images -->|"light: make host-bootstrap, make deploy"| vm["One VM<br/>Docker Compose"]
+  images -->|"standard: release_version, terraform apply"| managed["Managed containers<br/>behind a WAF"]
+  infra --> vm
+  infra --> managed
+```
+
 | | Light: proof of concept, small pilots | Standard: mid-size production |
 |---|---|---|
 | Deployment | Terraform creates the server; the `host` adapter deploys: `make release`, `make host-bootstrap`, `make deploy` | Terraform deploys the images `make release` pushed, set by `release_version` |

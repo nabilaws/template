@@ -29,6 +29,26 @@ require the mount. It also bind-mounts `/var/lib/docker/margince-host` at
 on the data disk too. It does not install Docker or Margince. Keep `HOST_DIR`
 unset, or under `/opt/margince`.
 
+```mermaid
+flowchart LR
+  users(["Users, any network"]) -->|"HTTPS 443"| ip["Static public IP<br/>NSG: 80, 443 open; 22 from ssh_allowed_cidrs"]
+  operator(["Operator"]) -->|"SSH 22, make deploy"| ip
+  subgraph vm["Ubuntu 24.04 VM, Docker Compose (host adapter)"]
+    caddy["Caddy<br/>HTTPS, certificates"] --> nginx["nginx<br/>routing, rate limits"]
+    nginx --> api["api"]
+    nginx --> web["web (SPA)"]
+    api --> pg[("Postgres 16")]
+    api --> redis[("Redis 7.2")]
+    worker["worker"] --> pg
+    worker --> redis
+  end
+  ip --> caddy
+  vm --- disk[("Data disk<br/>/var/lib/docker")]
+  backup["Azure Backup, daily"] -.-> disk
+  kv["Key Vault<br/>license"] -.->|"read by the operator"| operator
+  alerts["Metric alerts"] -.-> mail(["alert_email"])
+```
+
 ## 2. Cost
 
 West Europe, pay-as-you-go, about **EUR 75 per month**:

@@ -16,14 +16,40 @@ for a small team (about 40 users). It deploys the images that the template's
 | Delivery | ECR repositories `<instance_name>/api|web|worker` (IMMUTABLE tags, enhanced scanning, lifecycle policy), a bootstrap host security group and instance profile |
 | Protection | CloudWatch alarms to a CMK-encrypted SNS topic, `prevent_destroy` on the stateful resources, EFS backup, CloudWatch log groups (30 days) |
 
+```mermaid
+flowchart LR
+  users(["Users, any network"]) -->|"HTTPS"| alb["ALB + AWS WAF<br/>ACM TLS, WAF web ACL"]
+  subgraph vpc["VPC: private subnets, and VPC endpoints for S3, SSM, ECR, KMS, Logs"]
+    web["web<br/>nginx, SPA"]
+    api["api"]
+    worker["worker"]
+    pg[("RDS PostgreSQL 16<br/>Multi-AZ, KMS")]
+    cache[("ElastiCache Valkey 7.2<br/>TLS, AUTH")]
+    s3[("S3 attachments<br/>SSE-KMS")]
+    efs[("EFS<br/>margince.yaml")]
+    ssm["SSM Parameter Store<br/>secrets, KMS"]
+    ecr["ECR<br/>make release images"]
+    nat["NAT gateways"]
+    ops["Bootstrap host<br/>SSM, temporary"]
+  end
+  alb -->|"/"| web
+  alb -->|"/v1, /oauth, /mcp, /webhooks"| api
+  api --> pg
+  api --> cache
+  worker --> pg
+  worker --> cache
+  api --> s3
+  api --> efs
+  api -.->|"secrets"| ssm
+  worker -.->|"secrets"| ssm
+  api --> nat
+  worker --> nat
+  nat --> ext(["Graph, LLM, SMTP"])
+  web -.->|"pull"| ecr
+  ops -.->|"bootstrap"| pg
+  alarms["CloudWatch alarms, SNS"] -.-> mail(["alert_email"])
 ```
-Internet ──HTTPS──> ALB + AWS WAF ──HTTP (private subnets)──> web (nginx :8080, SPA)
-                         │
-                         └── /v1*, /oauth/*, /mcp*, /webhooks/*, /healthz ──> api (:8080) ──> RDS PostgreSQL (TLS, verify-full)
-                                                                                 │          ElastiCache Valkey (TLS)
-worker (no ingress) ─────────────────────────────────────────────────────────────┤          S3 (SSE-KMS), EFS config
-                                                                                 └─> NAT ─> Graph, LLM, SMTP
-```
+
 
 ## Before you start
 

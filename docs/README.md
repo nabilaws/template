@@ -26,6 +26,7 @@ link to it.
 |---|---|
 | [Release](release.md) | Cut a release with `make release`, and what `release.yml` builds, tests, and publishes. Image names, `make package`, and `make smoke`. |
 | [Deploy](deploy.md) | The deployment contract, `make deploy-init`, the `host` adapter, the `hook` adapter, and `deploy.yml`. |
+| [Cloud infrastructure](../deploy/production/README.md) | Terraform for Azure and AWS: a light flavour (one VM with the `host` adapter) and a standard flavour (managed containers behind a WAF), the same method on both clouds, with architecture diagrams. |
 | [License](license.md) | Obtain a trial or production license with `make license`, and the license service API. |
 | [Trial](trial.md) | Build a trial desktop bundle with a trial license with `make trial`. |
 
