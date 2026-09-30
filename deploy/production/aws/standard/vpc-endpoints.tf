@@ -72,7 +72,7 @@ resource "aws_vpc_endpoint" "s3" {
 
 resource "aws_security_group" "vpc_endpoints" {
   name_prefix = "${var.name_prefix}-vpce-"
-  description = "Interface VPC endpoints (ECR, SSM, KMS, CloudWatch Logs); HTTPS ingress from ECS tasks (api/worker and web) and the bootstrap host only, no egress."
+  description = "Interface VPC endpoints (ECR, SSM, KMS, CloudWatch Logs); HTTPS ingress from ECS tasks (api/worker and web), the bootstrap host and the release runner only, no egress."
   vpc_id      = aws_vpc.this.id
   tags        = { Name = "${var.name_prefix}-vpce", Component = "network" }
 
@@ -104,6 +104,16 @@ resource "aws_security_group" "vpc_endpoints" {
     to_port         = 443
     protocol        = "tcp"
     security_groups = [aws_security_group.ops.id]
+  }
+
+  # The release runner (release-runner.tf) pushes to ECR and registers its
+  # SSM agent through these endpoints, like the bootstrap host.
+  ingress {
+    description     = "HTTPS from the release runner (release-runner.tf)"
+    from_port       = 443
+    to_port         = 443
+    protocol        = "tcp"
+    security_groups = [aws_security_group.release_runner.id]
   }
 
   # No egress block — an interface endpoint's ENI answers requests, it never

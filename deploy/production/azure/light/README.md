@@ -14,7 +14,7 @@ same shape, variables and outputs.
 
 | Area | Resources |
 |---|---|
-| Compute | One VM, `Standard_B2ms` (2 vCPU, 8 GiB), Canonical Ubuntu 24.04 LTS server Gen2. Trusted Launch, encryption at host, Azure-orchestrated OS patching. Admin user `azureadmin` with passwordless `sudo`, SSH key login only. |
+| Compute | One VM, `Standard_B2ps_v2` (2 vCPU, 8 GiB, Ampere arm64; `architecture = "amd64"` with `Standard_B2ms` for x86_64), Canonical Ubuntu 24.04 LTS server Gen2. Trusted Launch, encryption at host, Azure-orchestrated OS patching. Admin user `azureadmin` with passwordless `sudo`, SSH key login only. |
 | Storage | 30 GB OS disk. 64 GB data disk (`prevent_destroy`), mounted at `/var/lib/docker` by cloud-init before Docker is installed. Every Docker volume (`pgdata`, `redisdata`, `blobs`, `caddydata`) is on it. |
 | Network | VNet with one subnet, static Standard public IP. NSG: 80 and 443 from the internet, 22 from `ssh_allowed_cidrs` only. Outbound open. |
 | Secrets | Key Vault (RBAC, purge protection, firewall open to `ssh_allowed_cidrs` only) with the license. The VM does not read it. |
@@ -51,11 +51,11 @@ flowchart LR
 
 ## 2. Cost
 
-West Europe, pay-as-you-go, about **EUR 75 per month**:
+West Europe, pay-as-you-go, about **EUR 65 per month** (about EUR 75 with `amd64`):
 
 | Item | EUR per month |
 |---|---|
-| VM `Standard_B2ms` | about 55 |
+| VM `Standard_B2ps_v2` | about 45 (`Standard_B2ms`: about 55) |
 | OS and data disk (StandardSSD) | about 8 |
 | Static public IP | about 3 |
 | Azure Backup | about 8 |
@@ -101,7 +101,8 @@ commands in the repository root.
    | `ssh_allowed_cidrs` | required | IPv4 ranges for SSH and the Key Vault firewall. `0.0.0.0/0` is refused. |
    | `name_prefix` | `margince` | Prefix of the resource names; the resource group is `<name_prefix>-light`. |
    | `region` | `westeurope` | Azure region. |
-   | `vm_size` | `Standard_B2ms` | VM size. |
+   | `architecture` | `arm64` | `arm64` or `amd64`. |
+   | `vm_size` | `Standard_B2ps_v2` | VM size of that architecture: an Ampere size for `arm64`, `Standard_B2ms` for `amd64`. A mismatch fails the plan. |
    | `data_disk_gb` | `64` | Size of the data disk. |
    | `alert_email` | `""` | Receiver of the alerts. Empty adds none. |
    | `license_token` | `""` | `MARGINCE_LICENSE`, stored in Key Vault. |
@@ -163,6 +164,12 @@ make host-bootstrap ENV=production
    ```sh
    make release VERSION=<v>
    ```
+
+   The images must include this VM's platform, `terraform output -raw
+   image_platform`, which is `linux/<architecture>`. `release.yml`
+   pushes the platforms in the repository variable `PLATFORMS` (default
+   `linux/amd64`); set `PLATFORMS=linux/amd64,linux/arm64` to deploy on either
+   ([docs/release.md, Section 5](../../../../docs/release.md#5-repository-settings)).
 
 2. Set the values of `secret_names` from Key Vault. Run the commands that
    this prints:
@@ -241,6 +248,10 @@ Password login is protected by per-client rate limits on the credential endpoint
 | Shell on the VM | `terraform output -raw ssh_command` |
 | Logs | `docker compose -p margince-<name> logs` on the VM, in `$HOST_DIR/current` |
 | Boot log | `az vm boot-diagnostics get-boot-log -g <resource-group> -n <vm>` |
+
+**Arm64.** `architecture = "arm64"` with an Ampere `vm_size` selects the Arm64 Ubuntu image. The VM keeps
+Trusted Launch (secure boot, vTPM) and encryption at host; check that the
+region offers both for the chosen Arm64 size before the first apply.
 
 ## 9. Versions
 

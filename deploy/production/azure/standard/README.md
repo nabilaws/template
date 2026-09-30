@@ -14,7 +14,7 @@ the AWS standard stack.
 | Data | Postgres Flexible Server 16 (VNet-integrated, customer-managed key, auto-grow, Entra and password auth; single-zone Burstable B2s by default, zone-redundant HA with `db_sku_name` General Purpose and `db_zone_redundant_ha = true`), Storage account with `config`, `attachments` and `redis` file shares, Key Vault premium (RBAC, purge protection) |
 | Network | VNet with apps, Postgres, private-endpoint and ops subnets; deny-by-default NSGs; private endpoints and DNS zones for Key Vault, registry, blob and file; NAT Gateway with one fixed egress IP; VNet flow logs with traffic analytics |
 | Identity | Managed identities for api, worker, Dataverse and customer-managed keys |
-| Delivery | Container Registry Premium (images from `make release`, private endpoint), jumpbox VM with Azure Bastion Developer |
+| Delivery | Container Registry Premium (images from `make release`, private endpoint), jumpbox VM with Azure Bastion Developer that is also the self-hosted release runner (managed identity with `AcrPush`) |
 | Protection | Share soft delete and daily Azure Backup (attachments, redis), delete locks on the stateful resources, diagnostic settings on every resource that has them, metric alerts, Log Analytics (90 days) |
 
 ```mermaid
@@ -32,7 +32,7 @@ flowchart LR
     files[("Storage: config, attachments, redis<br/>CMK, private endpoint")]
     kv["Key Vault<br/>secrets, CMK, certificate"]
     acr["Container Registry<br/>make release images"]
-    jump["Jumpbox<br/>Bastion Developer"]
+    jump["Jumpbox and release runner<br/>Bastion Developer, GitHub Actions, amd64"]
     nat["NAT Gateway<br/>fixed egress IP"]
   end
   agw -->|"HTTPS"| edge
@@ -47,6 +47,7 @@ flowchart LR
   nat --> ext(["Graph, LLM, SMTP"])
   env -.->|"pull"| acr
   jump -.->|"bootstrap"| pg
+  jump -->|"make release: build, smoke test, push"| acr
   logs["Log Analytics, alerts"] -.-> mail(["alert_email"])
 ```
 
@@ -69,8 +70,8 @@ unsubscribe), which the app protects with tokens.
   Network Watcher in the region (`NetworkWatcher_<region>` in
   `NetworkWatcherRG`), which Azure creates with the first VNet unless the
   subscription opted out.
-- **Tools**: Terraform 1.10 or newer, Azure CLI, `jq`; Docker with buildx for
-  a manual image push (Section 3).
+- **Tools**: Terraform 1.10 or newer, Azure CLI, `jq`. Images are built on
+  the jumpbox (Section 3), not on your machine.
 - **Margince**: a licence token, and this instance repository with its `core/`
   submodule checked out (`git submodule update --init`). The images come from
   `make release`; the bootstrap SQL and `margince.example.yaml` come from
@@ -135,59 +136,65 @@ later, from the api's entrypoint, with the owner role.
 
 ## 3. Build and push the images
 
-The AWS standard stack uses the same flow. The images are the ones
-`make release` (the `release.yml` workflow) or `make package` builds from
-core's `Dockerfile`, named `<REGISTRY>/<instance_name>/<role>:<VERSION>`
-(the instance repository's `docs/release.md`, Section 6). This stack deploys
+Releases are built inside this stack's network. The jumpbox is also the
+repository's self-hosted GitHub Actions runner: `release.yml` builds core's
+images on it (`make package`), smoke-tests them (`make smoke`) and pushes them
+to the registry with the VM's managed identity, which holds `AcrPush` on this
+registry and nothing else. No registry password exists, and the registry
+stays private: the jumpbox reaches it through its private endpoint. The
+images are named `<REGISTRY>/<instance_name>/<role>:<VERSION>` (the instance
+repository's `docs/release.md`, Section 6); this stack deploys
 `<registry>/<instance_name>/<role>:<release_version>`
-(`terraform output image_refs`). Container Apps runs `linux/amd64` images
-only, the platform `release.yml` builds by default.
+(`terraform output image_refs`).
 
-1. Set the image registry. `REGISTRY` is this stack's ACR login server:
+1. Register the runner, once. In GitHub: repository → Settings → Actions →
+   Runners → New self-hosted runner, and copy the registration token. On the
+   jumpbox (Bastion, as in step 2), after `cloud-init status --wait` reports
+   `done`:
 
-   ```sh
-   terraform output -raw registry   # <acr_name>.azurecr.io
+   ```bash
+   cd /opt/actions-runner
+   sudo -u runner ./config.sh --url https://github.com/<owner>/<repo> --token <token> \
+     --labels margince-runner --unattended --replace
+   sudo ./svc.sh install runner && sudo ./svc.sh start
    ```
 
-   For `release.yml`, set it as the repository variable `REGISTRY`. For a
-   manual push, export it in your shell. `instance_name` must equal `name`
-   in `instance.yaml`.
+   A jumpbox created before the runner existed has no runner software:
+   `terraform apply -replace=azurerm_linux_virtual_machine.jumpbox` first
+   (the VM keeps nothing that is not in git).
 
-2. Log in to the registry. The registry accepts pushes only from
-   `operator_ip_allowlist` and the VNet (the jumpbox). GitHub-hosted runners
-   are neither, so `release.yml` can push here only from a self-hosted runner
-   in the VNet or with the runner's address added to `operator_ip_allowlist`
-   for the release; the registry is never open to every source. `release.yml` logs in with the repository secrets
-   `REGISTRY_USERNAME` and `REGISTRY_PASSWORD`: create a repository-scoped
-   token with push rights for them:
+2. Set the repository variables (Settings → Secrets and variables →
+   Actions → Variables):
+
+   | Variable | Value |
+   |---|---|
+   | `REGISTRY` | `terraform output -raw registry` (`<acr_name>.azurecr.io`) |
+   | `RELEASE_RUNNER` | `margince-runner` (`terraform output -raw release_runner_label`) |
+   | `PLATFORMS` | leave unset, or `linux/amd64`: Container Apps runs `linux/amd64` images only |
+
+   Leave `REGISTRY_USERNAME` and `REGISTRY_PASSWORD` unset: `release.yml`
+   then skips `docker login` and uses the runner's own registry login.
+   `instance_name` must equal `name` in `instance.yaml`.
+
+3. Start the jumpbox if it is off (it stops at 20:00; a release waits in
+   GitHub's queue until it runs), then release:
+
+   ```sh
+   az vm start -g "$(terraform output -raw resource_group_name)" -n "$(terraform output -raw release_runner_vm_name)"
+   make release VERSION=v0.3.0      # release.yml builds, smoke-tests and pushes on the runner
+   ```
+
+   The registry login refreshes at boot and every hour
+   (`margince-acr-login.timer`, `az acr login` tokens last three hours); to
+   refresh it by hand: `sudo systemctl start margince-acr-login`.
+
+4. Lock the pushed tags, the counterpart of the AWS stack's `IMMUTABLE`
+   repositories, so a release is never overwritten. The runner's identity
+   cannot do this; run it as yourself (`az login`) on the jumpbox, then
+   `az logout`:
 
    ```sh
    ACR="$(terraform output -raw acr_name)"
-   az acr token create -r "$ACR" -n release --repository "<instance_name>/api" content/write content/read \
-     --repository "<instance_name>/web" content/write content/read \
-     --repository "<instance_name>/worker" content/write content/read
-   # use the token name as REGISTRY_USERNAME and one of its passwords as REGISTRY_PASSWORD
-   ```
-
-   For a manual push from an allowlisted machine or the jumpbox:
-
-   ```sh
-   az acr login -n "$(terraform output -raw acr_name)"
-   ```
-
-3. Build and push the release, one of:
-
-   ```sh
-   make release VERSION=v0.3.0                      # release.yml builds, tests and pushes
-   make package VERSION=v0.3.0 && for role in api web worker; do
-     docker push "$REGISTRY/<instance_name>/$role:v0.3.0"
-   done                                             # manual push
-   ```
-
-4. Lock the pushed tags, the counterpart of the AWS stack's `IMMUTABLE`
-   repositories, so a release is never overwritten:
-
-   ```sh
    for role in api web worker; do
      az acr repository update -n "$ACR" --image "<instance_name>/$role:v0.3.0" --write-enabled false
    done
@@ -196,6 +203,11 @@ only, the platform `release.yml` builds by default.
 5. Set `release_version = "v0.3.0"` in `terraform.tfvars` and run
    `terraform apply` (step 5 the first time). api and worker roll together;
    the api startup probe allows five minutes for migrations.
+
+Fallback without GitHub Actions: on the jumpbox as `runner`
+(`sudo -iu runner`), clone the instance repository, install the toolchain
+`docs/release.md` lists, run `make package VERSION=v0.3.0 REGISTRY=<registry>`
+and `docker push` the three images. The timer's login covers the push.
 
 ## 4. Upload `margince.yaml` (once)
 
@@ -251,9 +263,9 @@ curl -s -o /dev/null -w '%{http_code}\n' http://crm.example.com/                
 
 ## 7. Releases
 
-Follow Section 3 for each new version: `make release VERSION=<v>` (or
-`make package` and a manual push), lock the tags, set `release_version` and
-run `terraform apply` from the jumpbox or an allowlisted machine.
+Follow Section 3 for each new version: start the jumpbox,
+`make release VERSION=<v>`, lock the tags, set `release_version` and run
+`terraform apply` from the jumpbox or an allowlisted machine.
 
 ## Sign-in
 
@@ -317,6 +329,7 @@ uses it.
 | `db_sku_name`, `db_zone_redundant_ha` | `B_Standard_B2s`, `false` | Postgres size and HA |
 | `api_min_replicas`, `api_max_replicas` | `3`, `6` | api scale bounds |
 | `waf_mode` | `count` | `count` then `block` |
+| `architecture` | `amd64` | `amd64` only: Azure Container Apps runs `linux/amd64` images. For arm64 on Azure, use the light stack with an Ampere VM |
 | `enable_resource_locks` | `true` | `false` and apply before `terraform destroy` |
 
 ## Dataverse (optional)
@@ -355,7 +368,7 @@ Rough list prices in West Europe, per month, before usage-based traffic:
 | Private endpoints (4) | 30 |
 | Log Analytics, flow logs, traffic analytics | 30-50 |
 | Storage (ZRS), Backup, Key Vault | 25-35 |
-| Jumpbox (runs on demand), Bastion Developer (free) | 10-25 |
+| Jumpbox and release runner, Standard_B2ms (runs on demand, stops at 20:00), Bastion Developer (free) | 10-25 |
 | **Total** | **about 660-895** |
 
 Microsoft recommends General Purpose for production Postgres:
@@ -395,6 +408,14 @@ Microsoft recommends General Purpose for production Postgres:
   the storage account for 90 days.
 - **Jumpbox**: Trusted Launch (secure boot, vTPM), encryption at host,
   platform-managed OS patching, boot diagnostics.
+- **Release runner**: use a self-hosted runner with private repositories
+  only: on a public repository, a fork's pull request could run code on the
+  jumpbox. Jobs run as `runner`, which is in the `docker` group and so
+  root-equivalent on the VM: only `release.yml` should use the
+  `margince-runner` label, and `az logout` after your own work on the
+  jumpbox. The VM's identity holds `AcrPush` on this registry only. The runner
+  package is pinned and SHA-256 checked (`jumpbox.tf`,
+  `local.release_runner`) and updates itself after registration.
 - **Locks**: `CanNotDelete` locks on Postgres, storage, Key Vault, the
   Recovery Services vault and the registry (`enable_resource_locks`). Set it
   to `false` and apply before `terraform destroy`.

@@ -9,6 +9,16 @@ variable "azure_region" {
   default     = "westeurope"
 }
 
+variable "architecture" {
+  description = "CPU architecture of the containers. Azure Container Apps runs linux/amd64 only, so this stack accepts amd64 alone; the variable exists so that all four stacks name the architecture the same way. The release images must include linux/amd64 (PLATFORMS in docs/release.md)."
+  type        = string
+  default     = "amd64"
+  validation {
+    condition     = var.architecture == "amd64"
+    error_message = "architecture must be amd64: Azure Container Apps runs linux/amd64 images only. For arm64 on Azure, use the light stack with an Ampere VM."
+  }
+}
+
 variable "name_prefix" {
   description = "Prefix for every resource name, and the resource group's name. Globally unique names add a random suffix (naming.tf)."
   type        = string
@@ -89,7 +99,7 @@ variable "include_bootstrap_admin" {
 # ---- Access -----------------------------------------------------------------------------
 
 variable "operator_ip_allowlist" {
-  description = "Public IPv4 addresses (no /prefix) let through the Key Vault, Storage and registry firewalls while you set up or push a release. Leave empty in steady state; Postgres and Redis are never reachable this way (use the jumpbox)."
+  description = "Public IPv4 addresses (no /prefix) let through the Key Vault, Storage and registry firewalls while you set up. Leave empty in steady state; Postgres and Redis are never reachable this way (use the jumpbox)."
   type        = list(string)
   default     = []
   validation {

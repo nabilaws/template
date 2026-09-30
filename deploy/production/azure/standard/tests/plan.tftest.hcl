@@ -331,3 +331,64 @@ run "release_version_must_be_a_release" {
   }
   expect_failures = [var.release_version]
 }
+
+run "release_runner_on_the_jumpbox" {
+  command = plan
+  override_resource {
+    target          = random_string.suffix
+    override_during = plan
+    values          = { result = "abcde" }
+  }
+  override_resource {
+    target          = azurerm_container_registry.this
+    override_during = plan
+    values = {
+      id           = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/margince/providers/Microsoft.ContainerRegistry/registries/marginceabcdeacr"
+      login_server = "marginceabcdeacr.azurecr.io"
+    }
+  }
+  assert {
+    condition = (
+      azurerm_linux_virtual_machine.jumpbox.size == "Standard_B2ms" &&
+      azurerm_linux_virtual_machine.jumpbox.identity[0].type == "SystemAssigned" &&
+      alltrue([for c in azurerm_network_interface.jumpbox.ip_configuration : c.public_ip_address_id == null]) &&
+      !anytrue([for r in azurerm_network_security_group.ops.security_rule : r.direction == "Inbound" && r.access == "Allow" && r.source_address_prefix != "168.63.129.16"])
+    )
+    error_message = "The release runner is the jumpbox: 8 GiB, managed identity, no public IP, no inbound beyond Bastion Developer SSH."
+  }
+  assert {
+    condition = (
+      azurerm_role_assignment.jumpbox_acr_push.role_definition_name == "AcrPush" &&
+      azurerm_role_assignment.jumpbox_acr_push.scope == azurerm_container_registry.this.id &&
+      !azurerm_container_registry.this.admin_enabled &&
+      !azurerm_container_registry.this.public_network_access_enabled
+    )
+    error_message = "The jumpbox identity gets AcrPush on this stack's registry only; the registry stays private with no admin user."
+  }
+  assert {
+    condition = (
+      strcontains(local.jumpbox_cloud_init, "actions-runner-linux-x64-${local.release_runner.version}.tar.gz") &&
+      strcontains(local.jumpbox_cloud_init, "${local.release_runner.sha256}  /tmp/actions-runner.tar.gz\" | sha256sum -c -") &&
+      can(regex("^[0-9a-f]{64}$", local.release_runner.sha256)) &&
+      strcontains(local.jumpbox_cloud_init, "az login --identity --allow-no-subscriptions") &&
+      strcontains(local.jumpbox_cloud_init, "az acr login --name marginceabcdeacr") &&
+      strcontains(local.jumpbox_cloud_init, "OnUnitActiveSec=60min") &&
+      strcontains(local.jumpbox_cloud_init, "User=runner") &&
+      strcontains(local.jumpbox_cloud_init, "docker-buildx-plugin") &&
+      !strcontains(local.jumpbox_cloud_init, "config.sh")
+    )
+    error_message = "cloud-init installs the pinned, checksummed runner (unregistered) and an hourly managed-identity registry login."
+  }
+  assert {
+    condition     = output.release_runner_label == "margince-runner"
+    error_message = "The runner label matches the RELEASE_RUNNER value in the README."
+  }
+}
+
+run "arm64_refused" {
+  command = plan
+  variables {
+    architecture = "arm64"
+  }
+  expect_failures = [var.architecture]
+}

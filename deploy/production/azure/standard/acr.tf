@@ -12,9 +12,11 @@ resource "azurerm_container_registry" "this" {
   sku                 = "Premium"
   admin_enabled       = false
 
-  # Public endpoint only while operator_ip_allowlist is set (a release is
-  # pushed from an allowlisted machine). Otherwise the registry is reachable
-  # only through its private endpoint, which Container Apps pull through.
+  # Public endpoint only while operator_ip_allowlist is set (setup from an
+  # allowlisted machine). Otherwise the registry is reachable only through
+  # its private endpoint, which Container Apps pull through and the release
+  # runner on the jumpbox pushes through (jumpbox.tf). Network rules do not
+  # apply to private endpoint traffic.
   public_network_access_enabled = length(var.operator_ip_allowlist) > 0
   network_rule_set = [{
     default_action = "Deny"

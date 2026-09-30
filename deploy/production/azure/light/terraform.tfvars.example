@@ -16,7 +16,8 @@ ssh_allowed_cidrs = ["203.0.113.10/32"]
 
 # name_prefix   = "margince"
 # region        = "westeurope"
-# vm_size       = "Standard_B2ms"
+# architecture  = "arm64"             # or "amd64" with an x86 vm_size
+# vm_size       = "Standard_B2ps_v2"  # amd64: "Standard_B2ms"
 # data_disk_gb  = 64
 # alert_email   = ""   # for example "ops@example.com"
 # license_token = ""   # MARGINCE_LICENSE, stored in Key Vault

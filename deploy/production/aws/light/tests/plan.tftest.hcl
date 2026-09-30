@@ -35,11 +35,11 @@ variables {
 run "single_ubuntu_instance" {
   command = plan
   assert {
-    condition     = data.aws_ssm_parameter.ubuntu.name == "/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id"
+    condition     = data.aws_ssm_parameter.ubuntu.name == "/aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id"
     error_message = "The AMI is Canonical Ubuntu 24.04 LTS for amd64."
   }
   assert {
-    condition     = aws_instance.this.instance_type == "t3.large" && aws_instance.this.metadata_options[0].http_tokens == "required"
+    condition     = aws_instance.this.instance_type == "t4g.large" && aws_instance.this.metadata_options[0].http_tokens == "required"
     error_message = "One t3.large instance with IMDSv2 required."
   }
   assert {
@@ -63,6 +63,7 @@ run "single_ubuntu_instance" {
 run "arm64" {
   command = plan
   variables {
+    architecture  = "arm64"
     instance_type = "t4g.large"
   }
   assert {
@@ -217,4 +218,22 @@ run "ssh_from_anywhere_ipv6_refused" {
     ssh_allowed_cidrs = ["::/0"]
   }
   expect_failures = [var.ssh_allowed_cidrs]
+}
+
+run "graviton_type_without_arm64_refused" {
+  command = plan
+  variables {
+    architecture  = "amd64"
+    instance_type = "t4g.large"
+  }
+  expect_failures = [var.instance_type]
+}
+
+run "arm64_with_x86_type_refused" {
+  command = plan
+  variables {
+    architecture  = "arm64"
+    instance_type = "t3.large"
+  }
+  expect_failures = [var.instance_type]
 }

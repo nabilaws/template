@@ -32,10 +32,25 @@ variable "domain" {
   }
 }
 
-variable "vm_size" {
-  description = "VM size. Standard_B2ms (2 vCPU, 8 GiB) runs api, worker, web, Postgres, Redis and Caddy."
+variable "architecture" {
+  description = "CPU architecture of the VM: amd64 or arm64. The release images must include linux/<architecture> (PLATFORMS in docs/release.md), and vm_size must be a size of that architecture."
   type        = string
-  default     = "Standard_B2ms"
+  default     = "arm64"
+  validation {
+    condition     = contains(["amd64", "arm64"], var.architecture)
+    error_message = "architecture must be amd64 or arm64."
+  }
+}
+
+variable "vm_size" {
+  description = "VM size, of the chosen architecture. Standard_B2ps_v2 (2 vCPU, 8 GiB, Ampere arm64) runs api, worker, web, Postgres, Redis, Caddy and nginx; for amd64, Standard_B2ms (2 vCPU, 8 GiB)."
+  type        = string
+  default     = "Standard_B2ps_v2"
+  # Azure's Ampere (Arm64) sizes carry a lower-case p after the vCPU count.
+  validation {
+    condition     = can(regex("^Standard_[A-Z]+[0-9]+[a-z]*p[a-z]*_v[0-9]+$", var.vm_size)) == (var.architecture == "arm64")
+    error_message = "vm_size does not match architecture: an arm64 VM needs an Ampere size (Standard_B2pls_v2, Standard_D2ps_v5), an amd64 VM a non-Ampere one."
+  }
 }
 
 variable "admin_ssh_public_key" {

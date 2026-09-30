@@ -1,10 +1,9 @@
 #cloud-config
-# Jumpbox toolchain (jumpbox.tf): Azure CLI, Terraform, psql and cifs-utils
-# for the one-time setup steps, and the self-hosted GitHub Actions release
-# runner: Docker Engine with buildx and compose, the runner package (pinned,
-# SHA-256 checked) in /opt/actions-runner owned by the `runner` user, not
-# registered (README.md, section 3), and an hourly registry login with the
-# VM's managed identity.
+# Release runner (release-runner.tf): Docker Engine with buildx and compose,
+# the GitHub Actions runner package (pinned, SHA-256 checked) in
+# /opt/actions-runner owned by the `runner` user, not registered (README.md,
+# section 3), and the ECR credential helper, which signs every push with the
+# instance role: no docker login, no stored password.
 package_update: true
 packages:
   - ca-certificates
@@ -15,32 +14,8 @@ packages:
   - make
   - unzip
   - build-essential
-  - postgresql-client
-  - cifs-utils
+  - amazon-ecr-credential-helper
 write_files:
-  - path: /etc/systemd/system/margince-acr-login.service
-    content: |
-      [Unit]
-      Description=Registry login for the release runner (managed identity, no password)
-      Wants=network-online.target
-      After=network-online.target docker.service
-
-      [Service]
-      Type=oneshot
-      User=runner
-      ExecStart=/usr/bin/az login --identity --allow-no-subscriptions --output none
-      ExecStart=/usr/bin/az acr login --name ${acr_name}
-  - path: /etc/systemd/system/margince-acr-login.timer
-    content: |
-      [Unit]
-      Description=Refresh the registry login at boot and hourly (ACR tokens last 3 hours)
-
-      [Timer]
-      OnBootSec=1min
-      OnUnitActiveSec=60min
-
-      [Install]
-      WantedBy=timers.target
   - path: /usr/local/sbin/margince-runner-setup
     permissions: "0755"
     content: |
@@ -61,6 +36,15 @@ write_files:
       id runner >/dev/null 2>&1 || useradd --create-home --shell /bin/bash runner
       usermod -aG docker runner
 
+      # Registry credentials from the instance role, through the ECR
+      # credential helper (docker-credential-ecr-login).
+      install -d -m 0700 -o runner -g runner /home/runner/.docker
+      cat > /home/runner/.docker/config.json <<'JSON'
+      { "credHelpers": { "${registry_host}": "ecr-login" } }
+      JSON
+      chown runner:runner /home/runner/.docker/config.json
+      chmod 0600 /home/runner/.docker/config.json
+
       # GitHub Actions runner ${runner_version}, SHA-256 checked before unpacking.
       curl -fsSL -o /tmp/actions-runner.tar.gz https://github.com/actions/runner/releases/download/v${runner_version}/actions-runner-linux-${runner_arch}-${runner_version}.tar.gz
       echo "${runner_sha256}  /tmp/actions-runner.tar.gz" | sha256sum -c -
@@ -69,13 +53,5 @@ write_files:
       rm /tmp/actions-runner.tar.gz
       chown -R runner:runner /opt/actions-runner
       /opt/actions-runner/bin/installdependencies.sh
-
-      systemctl daemon-reload
-      systemctl enable --now margince-acr-login.timer
 runcmd:
-  - curl -sL https://aka.ms/InstallAzureCLIDeb | bash
-  - curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /usr/share/keyrings/hashicorp.gpg
-  - echo "deb [signed-by=/usr/share/keyrings/hashicorp.gpg] https://apt.releases.hashicorp.com $(. /etc/os-release && echo $VERSION_CODENAME) main" > /etc/apt/sources.list.d/hashicorp.list
-  - apt-get update && apt-get install -y terraform
-  - install -d -o ${admin_username} -g ${admin_username} /opt/margince
   - [bash, /usr/local/sbin/margince-runner-setup]

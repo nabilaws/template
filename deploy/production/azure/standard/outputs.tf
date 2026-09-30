@@ -96,6 +96,20 @@ output "jumpbox_private_ip" {
   value = azurerm_linux_virtual_machine.jumpbox.private_ip_address
 }
 
+output "release_runner_label" {
+  description = "Label of the self-hosted release runner: the RELEASE_RUNNER repository variable (README.md, step 3)."
+  value       = local.release_runner.label
+}
+
+output "release_runner_vm_name" {
+  description = "The release runner is the jumpbox VM. Start it for a release with `az vm start`."
+  value       = azurerm_linux_virtual_machine.jumpbox.name
+}
+
+output "release_runner_vm_id" {
+  value = azurerm_linux_virtual_machine.jumpbox.id
+}
+
 output "jumpbox_admin_username" {
   value = local.jumpbox_admin_username
 }
@@ -125,4 +139,9 @@ output "postgres_server_name" {
 
 output "key_vault_name" {
   value = azurerm_key_vault.this.name
+}
+
+output "image_platform" {
+  description = "Platform the release images must include for this stack (PLATFORMS in docs/release.md)."
+  value       = "linux/${var.architecture}"
 }

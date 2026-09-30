@@ -82,3 +82,8 @@ output "sso_redirect_uris" {
     google    = ["https://${var.domain}/v1/auth/oidc/google/callback", "https://${var.domain}/v1/connectors/gmail/callback"]
   }
 }
+
+output "image_platform" {
+  description = "Platform the release images must include for this instance (PLATFORMS in docs/release.md)."
+  value       = "linux/${var.architecture}"
+}

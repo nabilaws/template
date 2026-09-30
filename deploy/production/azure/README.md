@@ -6,7 +6,7 @@ and the method are in [`../README.md`](../README.md).
 
 | Flavour | Path | For | Shape | Rough cost per month |
 |---|---|---|---|---|
-| **Light** | [`light/`](light/README.md) | Proof of concept, small pilots | One Ubuntu 24.04 VM with Docker Compose (the template's `host` adapter): api, worker, web, Postgres 16 and Redis 7.2 containers, Caddy with automatic HTTPS in front of nginx (routing and credential-endpoint rate limits). Separate managed disk with daily Azure Backup, Key Vault for the operator secrets, basic alerts. | about EUR 75 |
+| **Light** | [`light/`](light/README.md) | Proof of concept, small pilots | One Ubuntu 24.04 VM with Docker Compose (the template's `host` adapter): api, worker, web, Postgres 16 and Redis 7.2 containers, Caddy with automatic HTTPS in front of nginx (routing and credential-endpoint rate limits). Separate managed disk with daily Azure Backup, Key Vault for the operator secrets, basic alerts. | about EUR 65 |
 | **Standard** | [`standard/`](standard/README.md) | Mid-size production (about 40 users) | Application Gateway WAF v2 in front of an internal Container Apps environment (api with the nginx edge, worker, Redis 7.2 container), Postgres Flexible Server 16, ACR with `make release` images, Key Vault with a customer-managed key, private endpoints, NAT egress IP, flow logs, locks, alerts and backups. | about EUR 660-895 |
 
 ## Requirements

@@ -13,7 +13,7 @@ for a small team (about 40 users). It deploys the images that the template's
 | Data | RDS PostgreSQL 16 (Multi-AZ, gp3 with storage autoscaling, 7-day backups, deletion protection, Performance Insights), ElastiCache Valkey 7.2 (two nodes, automatic failover, TLS required, AUTH token), S3 attachment bucket (versioned, SSE-KMS enforced), EFS for `margince.yaml` |
 | Network | VPC with public and private subnets across `az_count` zones, one NAT gateway per zone, VPC endpoints (S3 gateway; ECR, SSM, KMS and CloudWatch Logs interface endpoints) restricted to this account, VPC flow logs |
 | Secrets | SSM Parameter Store SecureStrings under `/<name_prefix>/`, one customer-managed KMS key (rotation on) for everything stored at rest |
-| Delivery | ECR repositories `<instance_name>/api|web|worker` (IMMUTABLE tags, enhanced scanning, lifecycle policy), a bootstrap host security group and instance profile |
+| Delivery | ECR repositories `<instance_name>/api|web|worker` (IMMUTABLE tags, enhanced scanning, lifecycle policy), a release runner EC2 instance (self-hosted GitHub Actions runner, private subnet, SSM only, instance role that pushes to the three repositories), a bootstrap host security group and instance profile |
 | Protection | CloudWatch alarms to a CMK-encrypted SNS topic, `prevent_destroy` on the stateful resources, EFS backup, CloudWatch log groups (30 days) |
 
 ```mermaid
@@ -31,6 +31,7 @@ flowchart LR
     ecr["ECR<br/>make release images"]
     nat["NAT gateways"]
     ops["Bootstrap host<br/>SSM, temporary"]
+    runner["Release runner<br/>SSM, GitHub Actions, arm64"]
   end
   alb -->|"/"| web
   alb -->|"/v1, /oauth, /mcp, /webhooks"| api
@@ -47,6 +48,7 @@ flowchart LR
   nat --> ext(["Graph, LLM, SMTP"])
   web -.->|"pull"| ecr
   ops -.->|"bootstrap"| pg
+  runner -->|"make release: build, smoke test, push"| ecr
   alarms["CloudWatch alarms, SNS"] -.-> mail(["alert_email"])
 ```
 
@@ -58,8 +60,8 @@ flowchart LR
 - **TLS certificate**: an ACM certificate in `aws_region` for the host in
   `public_base_url`, validated in your DNS zone.
 - **Tools**: Terraform 1.10 or newer, AWS CLI with the Session Manager
-  plugin, `jq`, `psql`; Docker with buildx for a manual image push
-  (Section 3).
+  plugin, `jq`, `psql`. Images are built on the release runner (Section 3),
+  not on your machine.
 - **Margince**: a licence token, and this instance repository with its `core/`
   submodule checked out (`git submodule update --init`). The images come from
   `make release`; the bootstrap SQL and `margince.example.yaml` come from
@@ -75,8 +77,8 @@ cp backend.hcl.example backend.hcl            # fill in
 cp terraform.tfvars.example terraform.tfvars  # fill in
 terraform init -backend-config=backend.hcl
 
-# Everything the database bootstrap and the image push need, but not the ECS
-# services: they would start pointed at a tag ECR does not have yet.
+# Everything the database bootstrap and the image build need, but not the
+# ECS services: they would start pointed at a tag ECR does not have yet.
 terraform apply \
   -target=aws_ecr_repository.api -target=aws_ecr_repository.worker -target=aws_ecr_repository.web \
   -target=aws_db_instance.this -target=aws_elasticache_replication_group.this \
@@ -84,7 +86,8 @@ terraform apply \
   -target=aws_efs_mount_target.config -target=aws_efs_access_point.config \
   -target=aws_ssm_parameter.owner_dsn -target=aws_ssm_parameter.app_dsn -target=aws_ssm_parameter.rds_master_password \
   -target=aws_security_group.ops -target=aws_iam_instance_profile.ops \
-  -target=aws_iam_role_policy.ops_efs -target=aws_iam_role_policy_attachment.ops_ssm
+  -target=aws_iam_role_policy.ops_efs -target=aws_iam_role_policy_attachment.ops_ssm \
+  -target=aws_instance.release_runner
 ```
 
 `terraform.tfvars` needs `public_base_url`, `acm_certificate_arn`,
@@ -143,57 +146,63 @@ parameter, for this step; no ECS task or execution role can read it.
 
 ## 3. Build and push the images
 
-The images are the ones `make release` (the `release.yml` workflow) or
-`make package` builds from core's `Dockerfile`, named
-`<REGISTRY>/<instance_name>/<role>:<VERSION>` (the instance repository's
-`docs/release.md`, Section 6). This stack deploys
+Releases are built inside this stack's network. The release runner
+(`release-runner.tf`) is the repository's self-hosted GitHub Actions runner:
+`release.yml` builds core's images on it (`make package`), smoke-tests them
+(`make smoke`) and pushes them to ECR with the instance role, which may push
+to the three repositories of this stack and nothing else. The ECR credential
+helper signs each push with that role: no registry password exists. The
+images are named `<REGISTRY>/<instance_name>/<role>:<VERSION>` (the instance
+repository's `docs/release.md`, Section 6); this stack deploys
 `<registry>/<instance_name>/<role>:<release_version>`
 (`terraform output image_refs`).
 
-1. Set the image registry. `REGISTRY` is this account's ECR registry host:
+1. Register the runner, once. In GitHub: repository → Settings → Actions →
+   Runners → New self-hosted runner, and copy the registration token. On the
+   runner (`aws ssm start-session --target "$(terraform output -raw release_runner_instance_id)"`),
+   after `cloud-init status --wait` reports `done`:
 
-   ```sh
-   terraform output -raw registry   # <account>.dkr.ecr.<region>.amazonaws.com
+   ```bash
+   cd /opt/actions-runner
+   sudo -u runner ./config.sh --url https://github.com/<owner>/<repo> --token <token> \
+     --labels margince-runner --unattended --replace
+   sudo ./svc.sh install runner && sudo ./svc.sh start
    ```
 
-   For `release.yml`, set it as the repository variable `REGISTRY`. For a
-   manual push, export it in your shell. `instance_name` must equal `name`
-   in `instance.yaml`.
+2. Set the repository variables (Settings → Secrets and variables →
+   Actions → Variables):
 
-2. Log in to the registry. `release.yml` logs in with the repository
-   secrets `REGISTRY_USERNAME` (`AWS`) and `REGISTRY_PASSWORD`. An ECR
-   password expires after 12 hours, so refresh it right before each release:
+   | Variable | Value |
+   |---|---|
+   | `REGISTRY` | `terraform output -raw registry` (`<account>.dkr.ecr.<region>.amazonaws.com`) |
+   | `RELEASE_RUNNER` | `margince-runner` (`terraform output -raw release_runner_label`) |
+   | `PLATFORMS` | optional; the default `linux/amd64,linux/arm64` includes this stack's `architecture` (`terraform output -raw image_platform`) |
 
-   ```sh
-   aws ecr get-login-password --region <aws_region> | gh secret set REGISTRY_PASSWORD
-   gh secret set REGISTRY_USERNAME --body AWS
-   ```
+   Leave `REGISTRY_USERNAME` and `REGISTRY_PASSWORD` unset: `release.yml`
+   then skips `docker login` and uses the runner's own registry credentials.
+   `instance_name` must equal `name` in `instance.yaml`.
 
-   For a manual push:
-
-   ```sh
-   aws ecr get-login-password --region <aws_region> \
-     | docker login --username AWS --password-stdin "$REGISTRY"
-   ```
-
-3. Build and push the release, one of:
+3. Release:
 
    ```sh
-   make release VERSION=v0.3.0                      # release.yml builds, tests and pushes
-   make package VERSION=v0.3.0 && for role in api web worker; do
-     docker push "$REGISTRY/<instance_name>/$role:v0.3.0"
-   done                                             # manual push
+   make release VERSION=v0.3.0      # release.yml builds, smoke-tests and pushes on the runner
    ```
 
-The identity that pushes needs `ecr:GetAuthorizationToken` on `*`, and
-`ecr:BatchCheckLayerAvailability`, `ecr:InitiateLayerUpload`,
-`ecr:UploadLayerPart`, `ecr:CompleteLayerUpload`, `ecr:PutImage` and
-`ecr:BatchGetImage` on the three repositories, plus `kms:GenerateDataKey`
-and `kms:Decrypt` on `kms_key_arn` (the repositories are encrypted with it).
-The repositories are `IMMUTABLE`: a pushed tag is never overwritten. The
-tasks run `cpu_architecture` (default `X86_64`, what `release.yml` builds by
-default); for `ARM64`, set the repository variable
-`PLATFORMS = "linux/amd64,linux/arm64"` first.
+   The repositories are `IMMUTABLE`: a pushed tag is never overwritten.
+
+4. Set `release_version = "v0.3.0"` in `terraform.tfvars` and run
+   `terraform apply` (step 5 the first time).
+
+Fallback without GitHub Actions: on the runner as `runner`
+(`sudo -iu runner`), clone the instance repository, install the toolchain
+`docs/release.md` lists, run `make package VERSION=v0.3.0 REGISTRY=<registry>`
+and `docker push` the three images. The credential helper covers the push.
+
+To pick up a newer runner version or cloud-init change, bump
+`local.release_runner` and `terraform apply -replace=aws_instance.release_runner`,
+then register again. To save its cost, stop the instance between releases
+(`aws ec2 stop-instances`); a release started while it is stopped waits in
+GitHub's queue until you start it.
 
 ## 4. Upload `margince.yaml` (once)
 
@@ -261,8 +270,8 @@ curl -s -o /dev/null -w '%{http_code}\n' http://crm.example.com/                
 
 ## 7. Releases
 
-Follow Section 3 for each new version, then set `release_version` in
-`terraform.tfvars` and run `terraform apply`. All three services get a new
+Follow Section 3 for each new version: `make release VERSION=<v>`, then set
+`release_version` in `terraform.tfvars` and run `terraform apply`. All three services get a new
 task definition in the same apply; api, worker and web move together.
 
 ## Sign-in
@@ -336,7 +345,7 @@ uses it.
 | `alert_email` | `""` | Alert subscription |
 | `aws_region`, `name_prefix`, `instance_name` | `eu-central-1`, `margince`, `margince-default` | Placement and names |
 | `az_count` | `2` | Availability Zones (one NAT gateway each) |
-| `cpu_architecture` | `X86_64` | Fargate architecture of the images |
+| `architecture` | `arm64` | `arm64` (Graviton) or `amd64`, for the Fargate tasks and the release runner |
 | `db_instance_class`, `db_multi_az` | `db.t4g.medium`, `true` | Postgres size and HA |
 | `api_min_replicas`, `api_max_replicas` | `2`, `4` | api scale bounds |
 | `waf_mode` | `count` | `count` then `block` |
@@ -355,7 +364,7 @@ Rough list prices in eu-central-1, per month, before usage-based traffic:
 
 | Item | USD |
 |---|---|
-| ECS Fargate: api (2-4 tasks), worker (1-3), web (2) | 80-165 |
+| ECS Fargate arm64: api (2-4 tasks), worker (1-3), web (2) | 65-130 |
 | RDS db.t4g.medium Multi-AZ, 50 GB gp3 | 130-145 |
 | ElastiCache cache.t4g.small, two nodes | 60 |
 | NAT gateways (2) and data processing | 65-90 |
@@ -364,10 +373,11 @@ Rough list prices in eu-central-1, per month, before usage-based traffic:
 | AWS WAF | 15-25 |
 | CloudWatch logs and alarms, SNS | 10-20 |
 | S3, EFS, ECR, KMS key and SSM Standard | 10-20 |
-| **Total** | **about 440-660** |
+| Release runner t4g.large (the stack's architecture), always on, 50 GB gp3 (stop it between releases to save most of this) | 50-55 |
+| **Total** | **about 475-630** |
 
-A Graviton release (`cpu_architecture = "ARM64"`, `PLATFORMS` including
-`linux/arm64`) cuts the Fargate line by about 20%.
+The default `architecture = "arm64"` (Graviton) costs about 20% less on the
+Fargate line than `amd64` (about 80-165).
 
 ## Security notes
 
@@ -388,12 +398,22 @@ A Graviton release (`cpu_architecture = "ARM64"`, `PLATFORMS` including
 - **Network**: one security group per tier. `web` reaches only the VPC
   endpoints and S3 (no path to RDS, ElastiCache, EFS or the internet); the
   data tiers have no egress rules; api and worker egress is in-VPC plus
-  443 and SMTP. VPC endpoints accept only this account's principals. VPC
-  flow logs record all traffic.
+  443 and SMTP. The release runner has no ingress and egress on 443 and 80
+  only. VPC endpoints accept only this account's principals. VPC flow logs
+  record all traffic.
 - **IAM**: separate task and execution roles per service, ECS trust policies
   with `aws:SourceAccount`/`aws:SourceArn`, no
   `AmazonECSTaskExecutionRolePolicy`. `web` reads no secrets. The RDS master
   password parameter is readable by no task.
+- **Release runner**: use a self-hosted runner with private repositories
+  only: on a public repository, a fork's pull request could run code on it.
+  Jobs run as `runner`, which is in the `docker` group and so
+  root-equivalent on the instance: only `release.yml` should use the
+  `margince-runner` label. Its role may push and pull the three ECR
+  repositories of this stack, and use the CMK only through ECR. IMDSv2 with
+  hop limit 1 keeps the role's credentials out of containers on the runner.
+  The runner package is pinned and SHA-256 checked (`local.release_runner`)
+  and updates itself after registration.
 - **Containers**: all Linux capabilities dropped, explicit
   `runtime_platform`, `stopTimeout = 60` for api and worker.
 - **Images**: IMMUTABLE ECR tags, so `release_version` pins the deployed

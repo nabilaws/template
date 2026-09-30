@@ -33,10 +33,25 @@ variable "domain" {
   }
 }
 
-variable "instance_type" {
-  description = "EC2 instance type. t3.large (2 vCPU, 8 GiB) runs api, worker, web, Postgres, Redis and Caddy. A Graviton type such as t4g.large selects the arm64 AMI and needs arm64 release images (README.md)."
+variable "architecture" {
+  description = "CPU architecture of the instance: amd64 or arm64. The release images must include linux/<architecture> (PLATFORMS in docs/release.md), and instance_type must be a size of that architecture."
   type        = string
-  default     = "t3.large"
+  default     = "arm64"
+  validation {
+    condition     = contains(["amd64", "arm64"], var.architecture)
+    error_message = "architecture must be amd64 or arm64."
+  }
+}
+
+variable "instance_type" {
+  description = "EC2 instance type, of the chosen architecture. t4g.large (2 vCPU, 8 GiB, Graviton arm64) runs api, worker, web, Postgres, Redis, Caddy and nginx; for amd64, t3.large."
+  type        = string
+  default     = "t4g.large"
+  # Graviton types (t4g, m7g, c7gn, a1, ...) carry a g after the generation.
+  validation {
+    condition     = can(regex("^(a1|[a-z]+[0-9]+g[a-z]*)\\.", var.instance_type)) == (var.architecture == "arm64")
+    error_message = "instance_type does not match architecture: an arm64 instance needs a Graviton type (t4g.large), an amd64 instance a non-Graviton one."
+  }
 }
 
 variable "admin_ssh_public_key" {

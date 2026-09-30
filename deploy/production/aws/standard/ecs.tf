@@ -1,6 +1,9 @@
 # Task sizes and counts, fixed as in the Azure standard stack (only the api
 # replica bounds are variables there too). Fargate CPU units and MiB.
 locals {
+  # Fargate's names for the two architectures.
+  fargate_architecture = var.architecture == "arm64" ? "ARM64" : "X86_64"
+
   sizing = {
     api_cpu             = 512
     api_memory          = 1024
@@ -199,7 +202,7 @@ resource "aws_ecs_task_definition" "api" {
   task_role_arn            = aws_iam_role.task_api.arn
 
   runtime_platform {
-    cpu_architecture        = var.cpu_architecture
+    cpu_architecture        = local.fargate_architecture
     operating_system_family = "LINUX"
   }
 
@@ -264,7 +267,7 @@ resource "aws_ecs_task_definition" "worker" {
   task_role_arn            = aws_iam_role.task_worker.arn
 
   runtime_platform {
-    cpu_architecture        = var.cpu_architecture
+    cpu_architecture        = local.fargate_architecture
     operating_system_family = "LINUX"
   }
 
@@ -333,7 +336,7 @@ resource "aws_ecs_task_definition" "web" {
   task_role_arn      = aws_iam_role.task_web.arn
 
   runtime_platform {
-    cpu_architecture        = var.cpu_architecture
+    cpu_architecture        = local.fargate_architecture
     operating_system_family = "LINUX"
   }
 

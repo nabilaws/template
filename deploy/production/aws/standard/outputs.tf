@@ -114,6 +114,16 @@ output "ops_instance_profile_name" {
   value       = aws_iam_instance_profile.ops.name
 }
 
+output "release_runner_label" {
+  description = "Label of the self-hosted release runner: the RELEASE_RUNNER repository variable (README.md, step 3)."
+  value       = local.release_runner.label
+}
+
+output "release_runner_instance_id" {
+  description = "The release runner EC2 instance. Connect with aws ssm start-session --target <id>."
+  value       = aws_instance.release_runner.id
+}
+
 output "private_subnet_ids" {
   description = "Private subnets; launch the temporary bootstrap host in one of these."
   value       = aws_subnet.private[*].id
@@ -125,4 +135,9 @@ output "sso_redirect_uris" {
     microsoft = ["${var.public_base_url}/v1/auth/oidc/microsoft/callback", "${var.public_base_url}/v1/connectors/graph/callback", "${var.public_base_url}/v1/connectors/graphcal/callback"]
     google    = ["${var.public_base_url}/v1/auth/oidc/google/callback", "${var.public_base_url}/v1/connectors/gmail/callback"]
   }
+}
+
+output "image_platform" {
+  description = "Platform the release images must include for this stack (PLATFORMS in docs/release.md)."
+  value       = "linux/${var.architecture}"
 }

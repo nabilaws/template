@@ -16,7 +16,8 @@ ssh_allowed_cidrs = ["203.0.113.10/32"]
 
 # name_prefix   = "margince-light"
 # region        = "eu-central-1"
-# instance_type = "t3.large"   # t4g.large (arm64) needs arm64 release images
+# architecture  = "arm64"      # or "amd64" with an x86 instance_type
+# instance_type = "t4g.large"  # amd64: "t3.large"
 # data_disk_gb  = 64
 # alert_email   = ""   # for example "ops@example.com"
 # license_token = ""   # MARGINCE_LICENSE, stored in SSM Parameter Store

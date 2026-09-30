@@ -61,13 +61,13 @@ run "single_ubuntu_vm" {
     condition = (
       azurerm_linux_virtual_machine.this.source_image_reference[0].publisher == "Canonical" &&
       azurerm_linux_virtual_machine.this.source_image_reference[0].offer == "ubuntu-24_04-lts" &&
-      azurerm_linux_virtual_machine.this.source_image_reference[0].sku == "server"
+      azurerm_linux_virtual_machine.this.source_image_reference[0].sku == "server-arm64"
     )
-    error_message = "The VM runs Canonical Ubuntu 24.04 LTS server."
+    error_message = "The VM runs Canonical Ubuntu 24.04 LTS server, Arm64 by default."
   }
   assert {
-    condition     = azurerm_linux_virtual_machine.this.size == "Standard_B2ms" && azurerm_linux_virtual_machine.this.admin_username == "azureadmin" && azurerm_linux_virtual_machine.this.disable_password_authentication
-    error_message = "One Standard_B2ms VM, admin user azureadmin, key login only."
+    condition     = azurerm_linux_virtual_machine.this.size == "Standard_B2ps_v2" && azurerm_linux_virtual_machine.this.admin_username == "azureadmin" && azurerm_linux_virtual_machine.this.disable_password_authentication
+    error_message = "One Standard_B2ps_v2 VM (Ampere, the default), admin user azureadmin, key login only."
   }
   assert {
     condition     = azurerm_linux_virtual_machine.this.secure_boot_enabled && azurerm_linux_virtual_machine.this.vtpm_enabled && azurerm_linux_virtual_machine.this.encryption_at_host_enabled
@@ -225,4 +225,46 @@ run "no_identity_resources" {
     condition     = alltrue([for f in fileset(path.module, "*.tf") : !can(regex("azuread_|hashicorp/azuread|provider \"azuread\"", file("${path.module}/${f}")))])
     error_message = "The stack creates no Entra resources and declares no azuread provider; sign-in apps are set up in Margince under Settings."
   }
+}
+
+run "arm64_size_gets_arm64_image" {
+  command = plan
+  variables {
+    architecture = "arm64"
+    vm_size      = "Standard_B2pls_v2"
+  }
+  assert {
+    condition     = azurerm_linux_virtual_machine.this.source_image_reference[0].sku == "server-arm64" && output.image_platform == "linux/arm64"
+    error_message = "An Ampere size gets the Arm64 Ubuntu image and needs linux/arm64 images."
+  }
+}
+
+run "x86_size_gets_x86_image" {
+  command = plan
+  variables {
+    architecture = "amd64"
+    vm_size      = "Standard_B2ms"
+  }
+  assert {
+    condition     = azurerm_linux_virtual_machine.this.source_image_reference[0].sku == "server" && output.image_platform == "linux/amd64"
+    error_message = "The default size gets the x86_64 Ubuntu image and needs linux/amd64 images."
+  }
+}
+
+run "ampere_size_without_arm64_refused" {
+  command = plan
+  variables {
+    architecture = "amd64"
+    vm_size      = "Standard_B2pls_v2"
+  }
+  expect_failures = [var.vm_size]
+}
+
+run "arm64_with_x86_size_refused" {
+  command = plan
+  variables {
+    architecture = "arm64"
+    vm_size      = "Standard_B2ms"
+  }
+  expect_failures = [var.vm_size]
 }

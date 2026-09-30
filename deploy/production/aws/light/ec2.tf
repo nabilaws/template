@@ -7,8 +7,6 @@
 # Elastic IP stay; run make host-bootstrap and make deploy again afterwards.
 
 locals {
-  # Graviton instance types (t4g, m7g, c7gn, ...) run the arm64 AMI.
-  ubuntu_arch = can(regex("^(a1|[a-z]+[0-9]+g[a-z]*)\\.", var.instance_type)) ? "arm64" : "amd64"
 
   # The same backup tag on the root and the data volume (backup.tf).
   backup_tag = { Backup = "${var.name_prefix}-daily" }
@@ -24,7 +22,7 @@ locals {
 # Canonical's current Ubuntu 24.04 LTS server AMI. ignore_changes below keeps
 # a newer AMI from replacing the instance.
 data "aws_ssm_parameter" "ubuntu" {
-  name = "/aws/service/canonical/ubuntu/server/24.04/stable/current/${local.ubuntu_arch}/hvm/ebs-gp3/ami-id"
+  name = "/aws/service/canonical/ubuntu/server/24.04/stable/current/${var.architecture}/hvm/ebs-gp3/ami-id"
 }
 
 resource "aws_key_pair" "admin" {

@@ -47,6 +47,7 @@ requires. The images are built from core's `Dockerfile`.
 | Go, Node, pnpm | core's `go.work`, `Dockerfile` and `package.json` | used inside the image build only |
 | Terraform | 1.10 or newer | all four stacks (S3 native state locking needs 1.10) |
 | OS (light) | Ubuntu 24.04 LTS | both clouds |
+| Architecture | `arm64` by default (`architecture` in every stack); Azure standard `amd64` only | Container Apps runs `linux/amd64` images only; `release.yml` pushes `linux/amd64,linux/arm64` by default |
 
 The host adapter pins the Postgres and Redis images in
 `scripts/deploy/host/compose.yaml`; `scripts/deploy/host/render.test.sh`

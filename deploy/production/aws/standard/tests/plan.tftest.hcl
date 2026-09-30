@@ -419,7 +419,7 @@ run "images_follow_the_release_naming" {
   }
 
   assert {
-    condition     = var.cpu_architecture == "X86_64"
+    condition     = var.architecture == "arm64" && aws_ecs_task_definition.api.runtime_platform[0].cpu_architecture == "ARM64"
     error_message = "The default architecture matches the linux/amd64 images make release builds by default."
   }
 }
@@ -469,5 +469,114 @@ run "security_group_and_iam_descriptions_are_ascii" {
       can(regex("^[ -~]*$", d))
     ])
     error_message = "An IAM role description uses a non-ASCII character."
+  }
+}
+
+run "release_runner" {
+  command = plan
+
+  override_resource {
+    target          = aws_security_group.ops
+    override_during = plan
+    values          = { id = "sg-0ops0000000000000" }
+  }
+  override_resource {
+    target          = aws_security_group.release_runner
+    override_during = plan
+    values          = { id = "sg-0runner000000000" }
+  }
+  override_resource {
+    target          = aws_subnet.private
+    override_during = plan
+    values          = { id = "subnet-0private000000" }
+  }
+  override_resource {
+    target          = aws_ecr_repository.api
+    override_during = plan
+    values          = { arn = "arn:aws:ecr:eu-central-1:123456789012:repository/margince-default/api" }
+  }
+  override_resource {
+    target          = aws_ecr_repository.worker
+    override_during = plan
+    values          = { arn = "arn:aws:ecr:eu-central-1:123456789012:repository/margince-default/worker" }
+  }
+  override_resource {
+    target          = aws_ecr_repository.web
+    override_during = plan
+    values          = { arn = "arn:aws:ecr:eu-central-1:123456789012:repository/margince-default/web" }
+  }
+  override_resource {
+    target          = aws_kms_key.data
+    override_during = plan
+    values          = { arn = "arn:aws:kms:eu-central-1:123456789012:key/00000000-0000-0000-0000-000000000000" }
+  }
+
+  assert {
+    condition = (
+      aws_instance.release_runner.instance_type == "t4g.large" &&
+      !aws_instance.release_runner.associate_public_ip_address &&
+      aws_instance.release_runner.metadata_options[0].http_tokens == "required" &&
+      aws_instance.release_runner.metadata_options[0].http_put_response_hop_limit == 1 &&
+      aws_instance.release_runner.root_block_device[0].encrypted &&
+      aws_instance.release_runner.root_block_device[0].volume_type == "gp3" &&
+      aws_instance.release_runner.root_block_device[0].volume_size == 50 &&
+      aws_iam_role_policy_attachment.release_runner_ssm.policy_arn == "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+    )
+    error_message = "The release runner is a t3.large with no public IP, IMDSv2 only (hop limit 1), an encrypted 50 GB gp3 root and SSM access."
+  }
+
+  assert {
+    condition     = aws_instance.release_runner.subnet_id == "subnet-0private000000" && aws_subnet.private[0].map_public_ip_on_launch != true
+    error_message = "The release runner sits in a private subnet."
+  }
+
+  assert {
+    condition = (
+      length(aws_security_group.release_runner.ingress) == 0 &&
+      toset([for e in aws_security_group.release_runner.egress : e.from_port]) == toset([80, 443]) &&
+      alltrue([for e in aws_security_group.release_runner.egress : e.protocol == "tcp" && e.from_port == e.to_port]) &&
+      anytrue([for r in aws_security_group.vpc_endpoints.ingress : contains(r.security_groups, "sg-0runner000000000") && r.from_port == 443])
+    )
+    error_message = "The runner security group has no ingress and only 80/443 egress; the VPC endpoints admit it on 443."
+  }
+
+  assert {
+    condition = (
+      toset(flatten([for st in data.aws_iam_policy_document.release_runner_ecr.statement : st.resources if st.sid == "PushAndPullOwnImages"])) == toset([aws_ecr_repository.api.arn, aws_ecr_repository.worker.arn, aws_ecr_repository.web.arn]) &&
+      toset(flatten([for st in data.aws_iam_policy_document.release_runner_ecr.statement : st.actions if st.sid == "PushAndPullOwnImages"])) == toset(["ecr:BatchCheckLayerAvailability", "ecr:BatchGetImage", "ecr:CompleteLayerUpload", "ecr:GetDownloadUrlForLayer", "ecr:InitiateLayerUpload", "ecr:PutImage", "ecr:UploadLayerPart"]) &&
+      flatten([for st in data.aws_iam_policy_document.release_runner_ecr.statement : st.resources if st.sid == "EcrAuth"]) == ["*"] &&
+      flatten([for st in data.aws_iam_policy_document.release_runner_ecr.statement : st.actions if st.sid == "EcrAuth"]) == ["ecr:GetAuthorizationToken"] &&
+      flatten([for st in data.aws_iam_policy_document.release_runner_ecr.statement : st.resources if st.sid == "UseDataKeyThroughEcr"]) == [aws_kms_key.data.arn] &&
+      length(data.aws_iam_policy_document.release_runner_ecr.statement) == 3
+    )
+    error_message = "The runner role pushes only to the three ECR repositories of this stack and uses the CMK only through ECR."
+  }
+
+  assert {
+    condition = (
+      strcontains(local.release_runner_cloud_init, "actions-runner-linux-arm64-${local.release_runner.version}.tar.gz") &&
+      strcontains(local.release_runner_cloud_init, "${local.release_runner.sha256.arm64}  /tmp/actions-runner.tar.gz\" | sha256sum -c -") &&
+      can(regex("^[0-9a-f]{64}$", local.release_runner.sha256.arm64)) && can(regex("^[0-9a-f]{64}$", local.release_runner.sha256.amd64)) &&
+      strcontains(local.release_runner_cloud_init, "amazon-ecr-credential-helper") &&
+      strcontains(local.release_runner_cloud_init, "{ \"credHelpers\": { \"123456789012.dkr.ecr.eu-central-1.amazonaws.com\": \"ecr-login\" } }") &&
+      strcontains(local.release_runner_cloud_init, "docker-buildx-plugin") &&
+      !strcontains(local.release_runner_cloud_init, "config.sh") &&
+      aws_instance.release_runner.user_data == local.release_runner_cloud_init
+    )
+    error_message = "cloud-init installs the pinned, checksummed runner (unregistered) and the ECR credential helper for this registry."
+  }
+
+  assert {
+    condition     = output.release_runner_label == "margince-runner" && local.ecr_registry_host == "123456789012.dkr.ecr.eu-central-1.amazonaws.com"
+    error_message = "The runner label matches the RELEASE_RUNNER value in the README; the helper targets this registry."
+  }
+
+  assert {
+    condition = (
+      can(regex("^[a-zA-Z0-9. _:/()#,@\\[\\]+=&;{}!$*-]*$", aws_security_group.release_runner.description)) &&
+      alltrue([for e in aws_security_group.release_runner.egress : can(regex("^[a-zA-Z0-9. _:/()#,@\\[\\]+=&;{}!$*-]*$", e.description))]) &&
+      can(regex("^[ -~]*$", aws_iam_role.release_runner.description))
+    )
+    error_message = "A release runner security group or IAM description uses a character AWS refuses."
   }
 }

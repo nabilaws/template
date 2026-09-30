@@ -6,7 +6,7 @@ and the method are in [`../README.md`](../README.md).
 
 | Flavour | Path | For | Shape | Rough cost per month |
 |---|---|---|---|---|
-| **Light** | [`light/`](light/README.md) | Proof of concept, small pilots | One Ubuntu 24.04 EC2 instance with Docker Compose (the template's `host` adapter): api, worker, web, Postgres 16 and Redis 7.2 containers, Caddy with automatic HTTPS in front of nginx (routing and credential-endpoint rate limits). Separate EBS volume with daily DLM snapshots, SSM Parameter Store for the operator secrets, basic alarms. | about USD 80 |
+| **Light** | [`light/`](light/README.md) | Proof of concept, small pilots | One Ubuntu 24.04 EC2 instance with Docker Compose (the template's `host` adapter): api, worker, web, Postgres 16 and Redis 7.2 containers, Caddy with automatic HTTPS in front of nginx (routing and credential-endpoint rate limits). Separate EBS volume with daily DLM snapshots, SSM Parameter Store for the operator secrets, basic alarms. | about USD 73 |
 | **Standard** | [`standard/`](standard/README.md) | Mid-size production (about 40 users) | ALB with AWS WAF in front of ECS Fargate (api, worker, web), RDS PostgreSQL 16 Multi-AZ, ElastiCache Valkey 7.2, ECR with `make release` images, SSM Parameter Store, one customer-managed KMS key, VPC endpoints, alarms. | see the flavour README |
 
 ## Requirements

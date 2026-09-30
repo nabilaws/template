@@ -61,13 +61,13 @@ variable "release_version" {
   }
 }
 
-variable "cpu_architecture" {
-  description = "Fargate CPU architecture for all three tasks: X86_64 (the linux/amd64 images release.yml builds by default) or ARM64 (set PLATFORMS = \"linux/amd64,linux/arm64\" for the release first)."
+variable "architecture" {
+  description = "CPU architecture of the three Fargate tasks and the release runner: arm64 (Graviton, default) or amd64. The release images must include linux/<architecture> (PLATFORMS in docs/release.md)."
   type        = string
-  default     = "X86_64"
+  default     = "arm64"
   validation {
-    condition     = contains(["X86_64", "ARM64"], var.cpu_architecture)
-    error_message = "cpu_architecture must be \"X86_64\" or \"ARM64\"."
+    condition     = contains(["amd64", "arm64"], var.architecture)
+    error_message = "architecture must be amd64 or arm64."
   }
 }
 

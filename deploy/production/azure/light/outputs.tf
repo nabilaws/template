@@ -85,3 +85,8 @@ output "alerts_action_group_id" {
   description = "The action group that receives the alerts."
   value       = azurerm_monitor_action_group.alerts.id
 }
+
+output "image_platform" {
+  description = "Platform the release images must include for this VM (PLATFORMS in docs/release.md)."
+  value       = "linux/${var.architecture}"
+}
