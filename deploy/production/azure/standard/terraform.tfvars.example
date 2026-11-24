@@ -42,7 +42,7 @@ operator_ip_allowlist = ["203.0.113.20"]
 
 # azure_region            = "westeurope"
 # name_prefix             = "margince"          # also the resource group name
-# db_sku_name             = "B_Standard_B2s"    # "GP_Standard_D2ds_v5": Microsoft's production recommendation
+# db_sku_name             = "B_Standard_B2ms"   # "GP_Standard_D2ds_v5": Microsoft's production recommendation
 # db_zone_redundant_ha    = false               # true needs a GP_ or MO_ SKU
 # api_min_replicas        = 3
 # api_max_replicas        = 6

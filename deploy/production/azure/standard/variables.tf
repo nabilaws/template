@@ -130,9 +130,9 @@ variable "jumpbox_ssh_public_key" {
 # ---- Sizing ----------------------------------------------------------------------------------
 
 variable "db_sku_name" {
-  description = "Postgres Flexible Server SKU. B_Standard_B2s (Burstable, 2 vCPU, 4 GiB) by default; Microsoft recommends General Purpose for production, e.g. GP_Standard_D2ds_v5 (about +EUR 75/month), which also allows db_zone_redundant_ha."
+  description = "Postgres Flexible Server SKU. B_Standard_B2ms (Burstable, 2 vCPU, 8 GiB) by default; B_Standard_B2s (4 GiB) is about EUR 52/month cheaper. Microsoft recommends General Purpose for production, e.g. GP_Standard_D2ds_v5 (about +EUR 35/month over B_Standard_B2ms), which also allows db_zone_redundant_ha."
   type        = string
-  default     = "B_Standard_B2s"
+  default     = "B_Standard_B2ms"
 }
 
 variable "db_zone_redundant_ha" {
