@@ -11,7 +11,7 @@ on Azure Container Apps.
 |---|---|
 | Edge | Application Gateway WAF v2 with a static public IP: the only public entry. TLS with the Key Vault certificate `public-tls`, HTTP to HTTPS redirect, WAF policy (Microsoft Default Rule Set 2.1, Bot Manager 1.1, two per-IP rate limits), `waf_mode` count or block. See "WAF rollout". |
 | Compute | Container Apps environment (internal: private IP only, workload profiles, Consumption profile, zone-redundant). **api** app (3 to 6 replicas, CPU and HTTP scale rules): `cmd/api` plus an **edge** nginx container that serves the SPA; its ingress is reachable only from the gateway. **worker** app: no ingress. **redis** app: Redis 7.2, one replica, internal TCP only. |
-| Data | Postgres Flexible Server 16 (VNet-integrated, customer-managed key, auto-grow, Entra and password auth; single-zone Burstable B2s by default, zone-redundant HA with `db_sku_name` General Purpose and `db_zone_redundant_ha = true`), Storage account with `config`, `attachments` and `redis` file shares, Key Vault premium (RBAC, purge protection) |
+| Data | Postgres Flexible Server 16 (VNet-integrated, customer-managed key, auto-grow, Entra and password auth; single-zone Burstable B2ms (8 GiB) by default, zone-redundant HA with `db_sku_name` General Purpose and `db_zone_redundant_ha = true`), Storage account with `config`, `attachments` and `redis` file shares, Key Vault premium (RBAC, purge protection) |
 | Network | VNet with apps, Postgres, private-endpoint and ops subnets; deny-by-default NSGs; private endpoints and DNS zones for Key Vault, blob and file; NAT Gateway with one fixed egress IP; VNet flow logs with traffic analytics |
 | Identity | Managed identities for api, worker, Dataverse and customer-managed keys |
 | Delivery | The api, web and worker images of one instance release, pulled by release tag over the NAT gateway; a one-off setup job (`setup.tf`) for `margince.yaml` and the database bootstrap; jumpbox VM with Azure Bastion Developer for operator tasks |
@@ -311,7 +311,7 @@ uses it.
 | `include_bootstrap_admin` | `true` | `false` after the first admin login (Section 5) |
 | `margince_config_path`, `bootstrap_sql_path` | the instance's `deploy/production/config/margince.yaml`, core's `db-bootstrap.sql` | Inputs of the setup job |
 | `azure_region`, `name_prefix` | `westeurope`, `margince` | Placement and names (`name_prefix` is also the resource group) |
-| `db_sku_name`, `db_zone_redundant_ha` | `B_Standard_B2s`, `false` | Postgres size and HA |
+| `db_sku_name`, `db_zone_redundant_ha` | `B_Standard_B2ms`, `false` | Postgres size and HA |
 | `api_min_replicas`, `api_max_replicas` | `3`, `6` | api scale bounds |
 | `waf_mode` | `count` | `count` then `block` |
 | `enable_resource_locks` | `true` | `false` and apply before `terraform destroy` |
@@ -346,13 +346,13 @@ Rough list prices in West Europe, per month, before usage-based traffic:
 |---|---|
 | Application Gateway WAF v2 (fixed charge, autoscale 1 to 10 units) | 250-350 |
 | Container Apps: api (3 replicas), worker, redis | 170-260 |
-| Postgres B_Standard_B2s, 64 GiB, backups | 65 |
+| Postgres B_Standard_B2ms, 64 GiB, backups | 117 |
 | NAT Gateway and IP | 35 |
 | Private endpoints (3) | 22 |
 | Log Analytics, flow logs, traffic analytics | 30-50 |
 | Storage (ZRS), Backup, Key Vault | 25-35 |
 | Jumpbox, Standard_B2ms (runs on demand, stops at 20:00), Bastion Developer (free) | 10-25 |
-| **Total** | **about 610-845** |
+| **Total** | **about 660-895** |
 
 Microsoft recommends General Purpose for production Postgres:
 `db_sku_name = "GP_Standard_D2ds_v5"` adds about EUR 75, and

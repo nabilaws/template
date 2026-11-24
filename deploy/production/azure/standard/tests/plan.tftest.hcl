@@ -39,8 +39,8 @@ run "first_apply_without_apps" {
     error_message = "Storage needs one private endpoint per sub-resource."
   }
   assert {
-    condition     = startswith(azurerm_postgresql_flexible_server.this.sku_name, "B_") && contains(keys(azurerm_monitor_metric_alert.this), "postgres-cpu-credits-low")
-    error_message = "The Burstable default gets a CPU-credit alert."
+    condition     = azurerm_postgresql_flexible_server.this.sku_name == "B_Standard_B2ms" && contains(keys(azurerm_monitor_metric_alert.this), "postgres-cpu-credits-low")
+    error_message = "The default is Burstable B2ms (8 GiB) and gets a CPU-credit alert."
   }
   assert {
     condition     = azurerm_postgresql_flexible_server.this.auto_grow_enabled && azurerm_postgresql_flexible_server.this.authentication[0].active_directory_auth_enabled
